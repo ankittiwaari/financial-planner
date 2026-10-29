@@ -1,0 +1,482 @@
+openapi: 3.1.0
+info:
+  title: DhanNiti API
+  version: 0.2.0
+  description: |
+    Personal expense and dues tracker. Single-user: the owner account is created with `php artisan db:seed`.
+    Money is always integer paise (₹45,250.50 → 4525050). Dates are ISO 8601; "today" is computed in the user's timezone.
+
+    Resources (milestone 1 onwards) are wrapped as `{"data": ...}`. Lists of transactions are cursor-paginated:
+    `{"data": [...], "meta": {"next_cursor": "..." | null}}`. Every resource belongs to the signed-in user;
+    another user's id behaves as 404.
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local Docker (from the Android emulator use http://10.0.2.2:8000/api/v1)
+security:
+  - bearer: []
+
+paths:
+  /health:
+    get:
+      summary: Liveness check
+      security: []
+      responses:
+        "200":
+          description: API is up
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
+
+  /auth/login:
+    post:
+      summary: Exchange email + password for a Sanctum token
+      description: Rate limited to 5 attempts per minute per email + IP.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, device_name]
+              properties:
+                email: { type: string, format: email, description: Case-insensitive }
+                password: { type: string }
+                device_name: { type: string, maxLength: 100, example: Google Pixel 9 }
+      responses:
+        "200":
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, user]
+                properties:
+                  token: { type: string, example: "1|kXl3..." }
+                  user: { $ref: "#/components/schemas/User" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/Error" }
+
+  /auth/logout:
+    post:
+      summary: Revoke the token used for this request
+      description: Other devices' tokens stay valid.
+      responses:
+        "204": { description: Token revoked }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+  /me:
+    get:
+      summary: Current user profile
+      responses:
+        "200":
+          description: The signed-in user
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+  # ---------- Milestone 1: ledger ----------
+
+  /accounts:
+    get:
+      summary: List accounts with live balances
+      parameters:
+        - { name: include_archived, in: query, schema: { type: boolean, default: false } }
+      responses:
+        "200":
+          description: Accounts, primary first then by name
+          content:
+            application/json:
+              schema: { type: object, required: [data], properties: { data: { type: array, items: { $ref: "#/components/schemas/Account" } } } }
+    post:
+      summary: Create an account
+      description: The first account becomes primary. Setting is_primary unsets it on the others.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/AccountInput" } } } }
+      responses:
+        "201": { $ref: "#/components/responses/AccountResponse" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /accounts/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Get an account
+      responses:
+        "200": { $ref: "#/components/responses/AccountResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Replace an account's editable fields
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/AccountInput" } } } }
+      responses:
+        "200": { $ref: "#/components/responses/AccountResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      summary: Archive an account
+      description: Its transactions are kept. Archived accounts can't receive new transactions.
+      responses:
+        "204": { description: Archived }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /categories:
+    get:
+      summary: List categories
+      description: New users start with a default set (Salary, Food, Rent, ...).
+      parameters:
+        - { name: kind, in: query, schema: { $ref: "#/components/schemas/CategoryKind" } }
+        - { name: include_archived, in: query, schema: { type: boolean, default: false } }
+      responses:
+        "200":
+          description: Categories by kind then name
+          content:
+            application/json:
+              schema: { type: object, required: [data], properties: { data: { type: array, items: { $ref: "#/components/schemas/Category" } } } }
+    post:
+      summary: Create a category
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CategoryInput" } } } }
+      responses:
+        "201": { $ref: "#/components/responses/CategoryResponse" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /categories/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    put:
+      summary: Rename or re-icon a category
+      description: kind can't change once the category is used by a transaction (422).
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CategoryInput" } } } }
+      responses:
+        "200": { $ref: "#/components/responses/CategoryResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      summary: Archive a category
+      description: Existing transactions keep it; it is hidden from pickers.
+      responses:
+        "204": { description: Archived }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /transactions:
+    get:
+      summary: List transactions, newest first
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: account_id, in: query, schema: { type: integer } }
+        - { name: category_id, in: query, schema: { type: integer } }
+        - { name: direction, in: query, schema: { $ref: "#/components/schemas/Direction" } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: A page of transactions ordered by occurred_on desc, id desc
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Transaction" } }
+                  meta: { type: object, required: [next_cursor], properties: { next_cursor: { type: [string, "null"] } } }
+    post:
+      summary: Record a transaction
+      description: The category's kind must match the direction (expense ↔ debit, income ↔ credit).
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/TransactionInput" } } } }
+      responses:
+        "201": { $ref: "#/components/responses/TransactionResponse" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /transactions/summary:
+    get:
+      summary: Totals for a date range
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: Totals in paise
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [from, to, credit_total, debit_total, net]
+                    properties:
+                      from: { type: string, format: date }
+                      to: { type: string, format: date }
+                      credit_total: { type: integer }
+                      debit_total: { type: integer }
+                      net: { type: integer, description: credit_total − debit_total }
+
+  /transactions/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Get a transaction
+      responses:
+        "200": { $ref: "#/components/responses/TransactionResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Replace a transaction's editable fields
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/TransactionInput" } } } }
+      responses:
+        "200": { $ref: "#/components/responses/TransactionResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      summary: Delete a transaction
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /income-sources:
+    get:
+      summary: List income sources (salary etc.) with their next pay date
+      responses:
+        "200":
+          description: Income sources
+          content:
+            application/json:
+              schema: { type: object, required: [data], properties: { data: { type: array, items: { $ref: "#/components/schemas/IncomeSource" } } } }
+    post:
+      summary: Create an income source
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/IncomeSourceInput" } } } }
+      responses:
+        "201": { $ref: "#/components/responses/IncomeSourceResponse" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /income-sources/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Get an income source
+      responses:
+        "200": { $ref: "#/components/responses/IncomeSourceResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Replace an income source's editable fields
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/IncomeSourceInput" } } } }
+      responses:
+        "200": { $ref: "#/components/responses/IncomeSourceResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      summary: Delete an income source
+      description: Past credits stay in the ledger (their source link is cleared).
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /income-sources/{id}/credits:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Log this source's credit for a pay period (manual salary credit)
+      description: |
+        Creates a credit transaction into the source's account, categorised as Salary, linked to the source and
+        period. Only one credit per source per period (409 otherwise). Milestone 5 automates this on payday.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [period]
+              properties:
+                period: { type: string, pattern: "^\\d{4}-\\d{2}$", example: "2026-10" }
+                amount: { type: integer, minimum: 1, description: Defaults to the source's amount }
+                occurred_on: { type: string, format: date, description: Defaults to the pay date for that period }
+      responses:
+        "201": { $ref: "#/components/responses/TransactionResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+components:
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: integer } }
+
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: Sanctum personal access token from /auth/login
+
+  schemas:
+    User:
+      type: object
+      required: [id, name, email, timezone, currency, cycle_mode]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string, format: email }
+        timezone: { type: string, example: Asia/Kolkata }
+        currency: { type: string, example: INR }
+        cycle_mode:
+          type: string
+          enum: [payday, calendar]
+          description: payday = salary to the day before next salary; calendar = 1st to month end
+
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
+
+    Paise: { type: integer, description: Amount in paise }
+
+    AccountType: { type: string, enum: [bank, cash, wallet] }
+    Account:
+      type: object
+      required: [id, name, type, opening_balance, balance, is_primary, archived]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        type: { $ref: "#/components/schemas/AccountType" }
+        opening_balance: { $ref: "#/components/schemas/Paise" }
+        balance: { type: integer, description: opening_balance + credits − debits, in paise }
+        is_primary: { type: boolean }
+        archived: { type: boolean }
+    AccountInput:
+      type: object
+      required: [name, type]
+      properties:
+        name: { type: string, maxLength: 60 }
+        type: { $ref: "#/components/schemas/AccountType" }
+        opening_balance: { type: integer, default: 0, description: May be negative (overdrawn) }
+        is_primary: { type: boolean, default: false }
+
+    CategoryKind: { type: string, enum: [income, expense] }
+    Category:
+      type: object
+      required: [id, name, kind, icon, archived]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        kind: { $ref: "#/components/schemas/CategoryKind" }
+        icon: { type: string, description: A single emoji, example: "🍔" }
+        archived: { type: boolean }
+    CategoryInput:
+      type: object
+      required: [name, kind, icon]
+      properties:
+        name: { type: string, maxLength: 40, description: Unique per kind }
+        kind: { $ref: "#/components/schemas/CategoryKind" }
+        icon: { type: string, maxLength: 16 }
+
+    Direction: { type: string, enum: [credit, debit], description: credit = money in, debit = money out }
+    Transaction:
+      type: object
+      required: [id, account_id, category_id, direction, amount, occurred_on, description, source_type, source_id, period, is_auto]
+      properties:
+        id: { type: integer }
+        account_id: { type: integer }
+        category_id: { type: [integer, "null"] }
+        direction: { $ref: "#/components/schemas/Direction" }
+        amount: { type: integer, minimum: 1, description: Always positive; direction gives the sign }
+        occurred_on: { type: string, format: date }
+        description: { type: [string, "null"] }
+        source_type: { type: [string, "null"], enum: [income_source, null], description: What generated it, if anything }
+        source_id: { type: [integer, "null"] }
+        period: { type: [string, "null"], example: "2026-10" }
+        is_auto: { type: boolean, description: Posted by automation (milestone 5) }
+    TransactionInput:
+      type: object
+      required: [account_id, direction, amount, occurred_on]
+      properties:
+        account_id: { type: integer, description: Must be an active account }
+        category_id: { type: [integer, "null"] }
+        direction: { $ref: "#/components/schemas/Direction" }
+        amount: { type: integer, minimum: 1, maximum: 100000000000 }
+        occurred_on: { type: string, format: date }
+        description: { type: [string, "null"], maxLength: 200 }
+
+    PayRule:
+      type: string
+      enum: [fixed_day, last_working_day, last_day]
+      description: fixed_day uses pay_day (clamped to the month's length); last_working_day = last Mon–Fri
+    WeekendShift:
+      type: string
+      enum: [before, after, none]
+      description: Where a pay date falling on Sat/Sun moves. Public holidays aren't modelled yet.
+    IncomeSource:
+      type: object
+      required: [id, name, account_id, amount, is_variable, pay_rule, pay_day, weekend_shift, auto_credit, active_from, active_to, next_pay_date, last_credited_period]
+      properties:
+        id: { type: integer }
+        name: { type: string, example: Salary - Acme }
+        account_id: { type: integer }
+        amount: { $ref: "#/components/schemas/Paise" }
+        is_variable: { type: boolean, description: Amount changes month to month; credits ask to confirm the amount }
+        pay_rule: { $ref: "#/components/schemas/PayRule" }
+        pay_day: { type: [integer, "null"], minimum: 1, maximum: 31 }
+        weekend_shift: { $ref: "#/components/schemas/WeekendShift" }
+        auto_credit: { type: boolean, description: Milestone 5 posts the credit on payday automatically }
+        active_from: { type: string, format: date }
+        active_to: { type: [string, "null"], format: date }
+        next_pay_date: { type: [string, "null"], format: date, description: Next pay date on or after today; null once ended }
+        last_credited_period: { type: [string, "null"], example: "2026-10" }
+    IncomeSourceInput:
+      type: object
+      required: [name, account_id, amount, pay_rule]
+      properties:
+        name: { type: string, maxLength: 60 }
+        account_id: { type: integer }
+        amount: { type: integer, minimum: 1 }
+        is_variable: { type: boolean, default: false }
+        pay_rule: { $ref: "#/components/schemas/PayRule" }
+        pay_day: { type: [integer, "null"], minimum: 1, maximum: 31, description: Required when pay_rule = fixed_day }
+        weekend_shift: { $ref: "#/components/schemas/WeekendShift" }
+        auto_credit: { type: boolean, default: true }
+        active_from: { type: string, format: date, description: Defaults to today }
+        active_to: { type: [string, "null"], format: date }
+
+  responses:
+    AccountResponse:
+      description: An account
+      content: { application/json: { schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/Account" } } } } }
+    CategoryResponse:
+      description: A category
+      content: { application/json: { schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/Category" } } } } }
+    TransactionResponse:
+      description: A transaction
+      content: { application/json: { schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/Transaction" } } } } }
+    IncomeSourceResponse:
+      description: An income source
+      content: { application/json: { schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/IncomeSource" } } } } }
+    Error:
+      description: Error with a message
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthenticated:
+      description: Missing, invalid or revoked token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { message: Unauthenticated. }
+    ValidationError:
+      description: Invalid input or wrong credentials
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [message, errors]
+            properties:
+              message: { type: string }
+              errors:
+                type: object
+                additionalProperties:
+                  type: array
+                  items: { type: string }
+          example:
+            message: These credentials do not match our records.
+            errors:
+              email: [These credentials do not match our records.]

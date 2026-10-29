@@ -1,0 +1,48 @@
+# Local development. Values come from backend/.env.
+#   docker compose up -d                      API on http://localhost:8000
+#   docker compose exec app php artisan ...   run artisan
+#   docker compose exec app composer test     run the test suite
+services:
+  app:
+    build: docker/php
+    image: dhanniti-php:dev
+    command: php artisan serve --host=0.0.0.0 --port=8000
+    environment:
+      PHP_CLI_SERVER_WORKERS: 4
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  # Runs scheduled jobs (salary posting, due generation, ...) every minute, like the production cron entry.
+  scheduler:
+    image: dhanniti-php:dev
+    command: php artisan schedule:work
+    volumes:
+      - .:/app
+    depends_on:
+      app:
+        condition: service_started
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  mysql-data:

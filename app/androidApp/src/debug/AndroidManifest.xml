@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Debug only: Android 17+ blocks apps targeting API 37 from LAN addresses (including the emulator's
+         10.0.2.2 host alias) without this runtime permission. Release builds talk to a public HTTPS API. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK"/>
+
+</manifest>
