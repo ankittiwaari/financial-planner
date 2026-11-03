@@ -72,7 +72,7 @@ it('rolls the window forward and reports missed dues as overdue', function () {
         ->all();
     expect($dues)->toBe([
         '2026-11-01 recurring_payment overdue',
-        '2026-11-05 loan overdue',
+        '2026-11-05 loan paid', // auto-debit: settled by the first request after its due date
         '2026-11-17 card_statement overdue',
         '2026-12-01 recurring_payment upcoming',
         '2026-12-05 loan upcoming',

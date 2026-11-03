@@ -61,7 +61,7 @@ function dueIdFor(string $title, string $period): int
  */
 it('matches a hand-worked purchasing power', function () {
     localDay('2026-10-20');
-    $salary = salarySource();
+    $salary = salarySource(['auto_credit' => false]); // this cycle's salary is logged by hand below
     $this->postJson('/api/v1/loans', [
         'name' => 'Home loan', 'type' => 'home', 'principal' => 400_000_000, 'interest_rate' => 8.5,
         'tenure_months' => 240, 'emi_amount' => 3_100_000, 'first_emi_date' => '2026-06-05', 'account_id' => $this->account->id,

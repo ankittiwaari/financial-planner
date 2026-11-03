@@ -15,6 +15,7 @@ use App\Support\DefaultCategories;
 use App\Support\Months;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Facades\Cache;
 use Throwable;
 
 /**
@@ -34,6 +35,27 @@ final class DailyAutomation
     public const CATCH_UP_DAYS = 7;
 
     public function __construct(private readonly DuesGenerator $dues, private readonly DuePayments $payments) {}
+
+    /**
+     * Runs today's jobs for this user unless they've already run today (on schedule or on an earlier request), so
+     * numbers never wait for cron: a salary due today is in and today's auto-debits are settled before any request
+     * is answered. A failed job isn't retried here on every request; the hourly schedule retries it.
+     */
+    public function catchUp(User $user): void
+    {
+        $today = $user->today()->toDateString();
+        $ranToday = fn () => JobRun::query()->where('user_id', $user->id)->whereDate('run_for_date', $today)->exists();
+        if ($ranToday()) {
+            return;
+        }
+        // Parallel requests (the app fires several at once) would otherwise all run it. Whoever doesn't get the lock
+        // goes ahead without waiting: everything they read is still correct, just not yet automated.
+        Cache::lock("automation:user:{$user->id}", 120)->get(function () use ($user, $ranToday) {
+            if (! $ranToday()) {
+                $this->run($user);
+            }
+        });
+    }
 
     /** @return array<string, array<string, int>|string> counts per job, or the error message of a failed job */
     public function run(User $user): array

@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\V1\RecurringPaymentController;
 use App\Http\Controllers\Api\V1\ReminderSettingsController;
 use App\Http\Controllers\Api\V1\SyncController;
 use App\Http\Controllers\Api\V1\TransactionController;
+use App\Http\Middleware\CatchUpAutomation;
 use Illuminate\Support\Facades\Route;
 
 // Contract: openapi.yaml. Single-user app, so there is no public sign-up; create the owner with `php artisan db:seed`.
@@ -22,7 +23,8 @@ Route::prefix('v1')->group(function () {
 
     Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
-    Route::middleware('auth:sanctum')->group(function () {
+    // CatchUpAutomation: the day's salary posting and auto-debits happen on the first request, not only via cron.
+    Route::middleware(['auth:sanctum', CatchUpAutomation::class])->group(function () {
         Route::get('me', [AuthController::class, 'me']);
         Route::post('auth/logout', [AuthController::class, 'logout']);
 

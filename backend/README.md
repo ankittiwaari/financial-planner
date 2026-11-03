@@ -359,8 +359,10 @@ purchasing_power = income (credited, or expected until logged) + other credits
 
 ### Automation (Milestone 5)
 
-`php artisan automation:run` runs **hourly** (the Docker `scheduler` service, or a `schedule:run` cron entry) and,
-for each user:
+The day's automation runs **on the user's first API request of the day** (`CatchUpAutomation` middleware), so numbers
+never wait for cron: open the app on payday and the salary is already in, with due auto-debits settled. Later requests
+that day skip it. `php artisan automation:run` also runs **hourly** (the Docker `scheduler` service, or a
+`schedule:run` cron entry), so it happens on days you don't open the app, and retries a failed job. For each user:
 
 | Job | What it does |
 |-----|--------------|
@@ -578,7 +580,8 @@ changing `.env`:
 /opt/cpanel/ea-php83/root/usr/bin/php artisan key:generate --force
 grep APP_KEY .env
 ```
-7. **Cron** (cPanel → Cron Jobs), every minute, for automation (salary posting, auto-debits) and the daily backup:
+7. **Cron** (cPanel → Cron Jobs), every minute, for the daily backup and for automation on days the app isn't opened
+   (the app's first request each day runs it too):
    ```
    * * * * * cd ~/dhanniti.algopraxis.com && /opt/cpanel/ea-php83/root/usr/bin/php artisan schedule:run >> /dev/null 2>&1
    ```

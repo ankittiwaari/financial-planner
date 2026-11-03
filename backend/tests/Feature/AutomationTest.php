@@ -85,7 +85,8 @@ it('produces the right ledger over a simulated two months', function () {
     $this->getJson("/api/v1/accounts/{$this->account->id}")
         ->assertJsonPath('data.balance', 2 * 12_000_000 + 2 * 3_000_000 - 2 * 3_100_000 - 2 * 500_000);
 
-    expect(JobRun::query()->count())->toBe(61 * 3)
+    // 61 scheduled days, plus the set-up day's run on its first request.
+    expect(JobRun::query()->count())->toBe(62 * 3)
         ->and(JobRun::query()->where('status', '!=', 'ok')->count())->toBe(0)
         ->and(JobRun::query()->where('job', 'post_salary')->whereDate('run_for_date', '2026-10-30')->value('counts'))
         ->toMatchArray(['posted' => 1]);
@@ -126,7 +127,8 @@ it('leaves salaries logged by hand alone, and skips sources without auto credit'
     runAutomationOn('2026-10-30');
 
     expect(ledgerLines())->toBe(['2026-10-30 credit 11500000 Salary - Acme'])
-        ->and(JobRun::query()->where('job', 'post_salary')->value('counts'))->toMatchArray(['posted' => 0, 'already_logged' => 1]);
+        ->and(JobRun::query()->where('job', 'post_salary')->whereDate('run_for_date', '2026-10-30')->value('counts'))
+        ->toMatchArray(['posted' => 0, 'already_logged' => 1]);
 });
 
 it('does not repost a salary that was deleted', function () {
@@ -223,4 +225,45 @@ it('shows what automation did', function () {
         ->assertJsonPath('data.1.job', 'post_salary')
         ->assertJsonPath('data.1.run_for_date', '2026-10-30')
         ->assertJsonPath('data.1.counts.posted', 1);
+});
+
+
+it('does the day’s automation on the first request, without waiting for cron', function () {
+    test()->travelTo(CarbonImmutable::parse('2026-10-20 10:00:00', 'Asia/Kolkata'));
+    autoSalary();
+    $this->postJson('/api/v1/loans', [
+        'name' => 'Car loan', 'type' => 'car', 'principal' => 100_000_000, 'interest_rate' => 12, 'tenure_months' => 12,
+        'first_emi_date' => '2026-08-31', 'account_id' => $this->account->id,
+    ])->assertCreated();
+
+    // Payday (30 Oct) and the EMI date (31 Oct) pass with no scheduler running at all.
+    test()->travelTo(CarbonImmutable::parse('2026-10-31 08:00:00', 'Asia/Kolkata'));
+    $data = $this->getJson('/api/v1/dashboard')->assertOk()->json('data');
+
+    expect(ledgerLines())->toBe(['2026-10-30 credit 12000000 Salary - Acme', '2026-10-31 debit 8884900 Car loan EMI'])
+        ->and($data['income']['credited'])->toBe(12_000_000)
+        ->and($data['reserved_for_dues']['paid'])->toBe(8_884_900)
+        ->and(collect($data['alerts'])->pluck('type')->unique()->values()->all())->toBe(['confirm_auto']);
+});
+
+it('runs the catch-up once a day, however many requests come in', function () {
+    test()->travelTo(CarbonImmutable::parse('2026-11-03 10:00:00', 'Asia/Kolkata'));
+
+    foreach (range(1, 5) as $i) {
+        $this->getJson('/api/v1/dashboard')->assertOk();
+    }
+    expect(JobRun::query()->count())->toBe(3);
+
+    test()->travelTo(CarbonImmutable::parse('2026-11-04 00:05:00', 'Asia/Kolkata')); // just past midnight, local time
+    $this->getJson('/api/v1/accounts')->assertOk();
+    expect(JobRun::query()->whereDate('run_for_date', '2026-11-04')->count())->toBe(3);
+});
+
+it('skips the catch-up when the scheduler already ran today', function () {
+    test()->travelTo(CarbonImmutable::parse('2026-11-03 10:00:00', 'Asia/Kolkata'));
+    $this->artisan('automation:run')->assertSuccessful();
+
+    $this->getJson('/api/v1/dashboard')->assertOk();
+
+    expect(JobRun::query()->count())->toBe(3);
 });
