@@ -92,6 +92,30 @@ jobs:
               exit 1
             fi
 
+            # This is a non-interactive shell: ~/.bashrc isn't read, so aliases and PATH tweaks made there don't apply.
+            # Find PHP 8.3 and Composer by their cPanel paths instead.
+            PHP=/opt/cpanel/ea-php83/root/usr/bin/php
+            [ -x "$PHP" ] || PHP="$(command -v php)"
+            if ! "$PHP" -r 'exit(PHP_VERSION_ID >= 80300 ? 0 : 1);'; then
+              echo "::error::$PHP is PHP $("$PHP" -r 'echo PHP_VERSION;'); the app needs 8.3. Install ea-php83 in cPanel."
+              exit 1
+            fi
+            COMPOSER="$(command -v composer || true)"
+            for candidate in /opt/cpanel/composer/bin/composer /usr/local/bin/composer "$HOME/bin/composer.phar"; do
+              if [ -z "$COMPOSER" ] && [ -f "$candidate" ]; then COMPOSER="$candidate"; fi
+            done
+            if [ -z "$COMPOSER" ]; then
+              # None installed: fetch the official phar once, checked against its published SHA-256.
+              mkdir -p "$HOME/bin"
+              curl -fsSL https://getcomposer.org/download/latest-stable/composer.phar -o "$HOME/bin/composer.phar"
+              echo "$(curl -fsSL https://getcomposer.org/download/latest-stable/composer.phar.sha256)  $HOME/bin/composer.phar" | sha256sum -c -
+              COMPOSER="$HOME/bin/composer.phar"
+            fi
+            echo "Using $("$PHP" -r 'echo PHP_VERSION;') at $PHP, Composer at $COMPOSER"
+            # Run Composer with the same PHP, not whichever one its shebang finds.
+            composer() { "$PHP" "$COMPOSER" "$@"; }
+            artisan() { "$PHP" artisan "$@"; }
+
             # Directories Laravel writes to, which rsync deliberately doesn't create or touch.
             mkdir -p storage/app/private storage/app/public storage/app/backups \
               storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
@@ -99,24 +123,24 @@ jobs:
             composer install --no-dev --optimize-autoloader --no-interaction --no-progress
 
             # Clear stale caches before migrating, so the migration runs with the new code's config.
-            php artisan optimize:clear
+            artisan optimize:clear
 
             # First deploy: give the app its encryption key. Only when .env has none, since changing it later would
             # sign everyone out. --force: in production key:generate otherwise asks to confirm and, with nobody to
             # answer, silently leaves .env unchanged.
             if ! grep -qE '^APP_KEY=base64:.+' .env; then
-              php artisan key:generate --force
+              artisan key:generate --force
             fi
 
-            php artisan migrate --force
-            php artisan config:cache
-            php artisan route:cache
-            php artisan event:cache
+            artisan migrate --force
+            artisan config:cache
+            artisan route:cache
+            artisan event:cache
 
             chmod -R 775 storage bootstrap/cache
 
             # Smoke test: the app boots and the API routes are registered.
-            php artisan route:list --path=api/v1/health | grep -q health
+            artisan route:list --path=api/v1/health | grep -q health
             echo "Deployed $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           EOF
 

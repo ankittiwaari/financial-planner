@@ -556,8 +556,10 @@ other cPanel deploys on this server).
 
 1. **Domain**: in cPanel → Domains, create `dhanniti.algopraxis.com` with document root
    `dhanniti.algopraxis.com/public`, and enable AutoSSL for it.
-2. **PHP 8.3**: MultiPHP Manager → set the domain to PHP 8.3. Check that the CLI is 8.3 too (`php -v` over SSH);
-   if not, add `alias php=/opt/cpanel/ea-php83/root/usr/bin/php` to `~/.bashrc` (the lock file is resolved for 8.3).
+2. **PHP 8.3**: MultiPHP Manager → set the domain to PHP 8.3 (the lock file is resolved for 8.3). The deploy and the
+   cron job call `/opt/cpanel/ea-php83/root/usr/bin/php` directly, because the plain `php` in non-interactive shells
+   may be another version, and `~/.bashrc` aliases don't apply there. Composer is found at its cPanel path, or
+   downloaded to `~/bin/composer.phar` and checked against its published checksum.
 3. **Database**: MySQL Databases → create a database and a user with all privileges on it.
 4. **Run the workflow once**: it copies the code, then stops with "`.env` is missing". That's expected.
 5. **`.env`**: over SSH, in `~/dhanniti.algopraxis.com`, `cp .env.example .env` and edit it: `APP_ENV=production`,
@@ -572,13 +574,13 @@ compares against a stale cached key, and in production it asks to confirm and, w
 changing `.env`:
 
 ```bash
-php artisan config:clear
-php artisan key:generate --force
+/opt/cpanel/ea-php83/root/usr/bin/php artisan config:clear
+/opt/cpanel/ea-php83/root/usr/bin/php artisan key:generate --force
 grep APP_KEY .env
 ```
 7. **Cron** (cPanel → Cron Jobs), every minute, for automation (salary posting, auto-debits) and the daily backup:
    ```
-   * * * * * cd ~/dhanniti.algopraxis.com && php artisan schedule:run >> /dev/null 2>&1
+   * * * * * cd ~/dhanniti.algopraxis.com && /opt/cpanel/ea-php83/root/usr/bin/php artisan schedule:run >> /dev/null 2>&1
    ```
 8. **App**: set the release `API_BASE_URL` in `app/androidApp/build.gradle.kts` to
    `https://dhanniti.algopraxis.com/api/v1/`.
