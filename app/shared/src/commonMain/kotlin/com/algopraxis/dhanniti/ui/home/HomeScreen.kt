@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.algopraxis.dhanniti.domain.Direction
+import com.algopraxis.dhanniti.domain.Money
 import com.algopraxis.dhanniti.domain.formatInr
 import com.algopraxis.dhanniti.domain.formatRelative
 import com.algopraxis.dhanniti.resources.Res
@@ -53,6 +54,9 @@ fun HomeScreen(
     onSeeAllTransactions: () -> Unit,
     onOpenIncome: () -> Unit,
     onAddAccount: () -> Unit,
+    onOpenLentMoney: () -> Unit,
+    onOpenDues: () -> Unit,
+    onOpenReminders: () -> Unit,
     viewModel: HomeViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -63,6 +67,7 @@ fun HomeScreen(
         actions = {
             IconButton(onClick = { menuOpen = true }) { AppIcon(Res.drawable.ic_more, "More") }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(text = { Text("Reminders") }, onClick = { menuOpen = false; onOpenReminders() })
                 DropdownMenuItem(text = { Text("Log out") }, onClick = { menuOpen = false; viewModel.logout() })
             }
         },
@@ -78,6 +83,13 @@ fun HomeScreen(
                 modifier = Modifier.fillMaxSize(),
             ) {
                 state.error?.let { item { ErrorText(it) } }
+
+                state.dashboard?.let { dashboard ->
+                    item { PurchasingPowerCard(dashboard, onOpenDues) }
+                    if (dashboard.alerts.isNotEmpty()) {
+                        item { AlertsCard(dashboard.alerts, onConfirm = viewModel::confirm, onOpenTransaction = onOpenTransaction) }
+                    }
+                }
 
                 item { BalanceCard(state) }
 
@@ -116,19 +128,28 @@ fun HomeScreen(
                     }
                 }
 
+                // Always shown: lending doesn't need an account, and it shouldn't pop in after accounts load.
                 item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    ) {
+                    Card(onClick = onOpenLentMoney, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            SectionLabel("Purchasing power this cycle")
-                            Text(
-                                "Arrives in milestone 4, once EMIs and card bills are in.",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
+                            SectionLabel("Lent money")
+                            val owed = state.receivables
+                            if (owed.totalOutstanding > Money.ZERO) {
+                                Text("You're owed ${owed.totalOutstanding.formatInr()}", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    (if (owed.peopleOwing == 1) "by 1 person" else "by ${owed.peopleOwing} people") +
+                                        (if (owed.overdueTotal > Money.ZERO) " · ${owed.overdueTotal.formatInr()} overdue" else ""),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            } else {
+                                Text("Nobody owes you anything · tap to record money you lend", style = MaterialTheme.typography.bodyMedium)
+                            }
                         }
                     }
+                }
+
+                state.dashboard?.nextDues?.takeIf { it.isNotEmpty() }?.let { dues ->
+                    item { NextDuesCard(dues, state.today, onOpenDues) }
                 }
 
                 if (state.recent.isNotEmpty()) {
@@ -159,12 +180,12 @@ fun HomeScreen(
 private fun BalanceCard(state: HomeUiState) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column {
                 SectionLabel("Total balance")
-                Text(state.totalBalance.formatInr(), style = MaterialTheme.typography.displaySmall)
+                Text(state.totalBalance.formatInr(), style = MaterialTheme.typography.headlineMedium)
             }
             state.monthSummary?.let { summary ->
                 Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {

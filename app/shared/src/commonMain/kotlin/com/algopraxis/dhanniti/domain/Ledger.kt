@@ -3,6 +3,7 @@ package com.algopraxis.dhanniti.domain
 import kotlinx.datetime.LocalDate
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 // Domain models double as the API wire format (backend/openapi.yaml). Money serialises as integer paise.
 
@@ -64,6 +65,10 @@ data class Transaction(
     @SerialName("source_id") val sourceId: Long? = null,
     val period: String? = null,
     @SerialName("is_auto") val isAuto: Boolean = false,
+    /** Booked by automation and not yet confirmed. */
+    @SerialName("needs_confirmation") val needsConfirmation: Boolean = false,
+    /** Made offline and not on the server yet. Never sent or received; set locally. */
+    @Transient val pendingSync: Boolean = false,
 ) {
     val signedAmount: Money get() = if (direction == Direction.CREDIT) amount else -amount
 }

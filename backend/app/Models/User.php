@@ -8,6 +8,7 @@ use Carbon\CarbonImmutable;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
@@ -40,6 +41,36 @@ class User extends Authenticatable
     public function incomeSources(): HasMany
     {
         return $this->hasMany(IncomeSource::class);
+    }
+
+    public function loans(): HasMany
+    {
+        return $this->hasMany(Loan::class);
+    }
+
+    public function creditCards(): HasMany
+    {
+        return $this->hasMany(CreditCard::class);
+    }
+
+    public function recurringPayments(): HasMany
+    {
+        return $this->hasMany(RecurringPayment::class);
+    }
+
+    public function dues(): HasMany
+    {
+        return $this->hasMany(Due::class);
+    }
+
+    public function reminderSetting(): HasOne
+    {
+        return $this->hasOne(ReminderSetting::class);
+    }
+
+    public function lendings(): HasMany
+    {
+        return $this->hasMany(Lending::class);
     }
 
     /** Today's date in the user's timezone: the basis for paydays, due dates and "this month". */

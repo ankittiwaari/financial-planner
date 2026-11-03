@@ -153,6 +153,8 @@ fun TransactionRow(
                 category?.name?.takeIf { transaction.description?.isNotBlank() == true },
                 accountName,
                 transaction.period?.let { "for ${formatPeriod(it)}" },
+                "auto · to confirm".takeIf { transaction.needsConfirmation },
+                "waiting to sync".takeIf { transaction.pendingSync },
                 subtitleDate,
             )
             if (details.isNotEmpty()) {

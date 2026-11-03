@@ -4,6 +4,7 @@ import com.algopraxis.dhanniti.domain.Account
 import com.algopraxis.dhanniti.domain.AccountType
 import com.algopraxis.dhanniti.domain.Category
 import com.algopraxis.dhanniti.domain.CategoryKind
+import com.algopraxis.dhanniti.domain.Dashboard
 import com.algopraxis.dhanniti.domain.Direction
 import com.algopraxis.dhanniti.domain.IncomeSource
 import com.algopraxis.dhanniti.domain.LedgerSummary
@@ -22,8 +23,11 @@ import kotlinx.datetime.LocalDate
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Milestone 1 endpoints: accounts, categories, transactions, income sources. See backend/openapi.yaml. */
+/** Milestone 1 endpoints (accounts, categories, transactions, income sources) and the dashboard. See backend/openapi.yaml. */
 class LedgerApi(private val client: HttpClient) {
+
+    /** Purchasing power for the current cycle (milestone 4). */
+    suspend fun dashboard(): Dashboard = client.get("dashboard").bodyOrThrow<Data<Dashboard>>().data
 
     suspend fun accounts(): List<Account> = client.get("accounts").bodyOrThrow<Data<List<Account>>>().data
 
@@ -68,6 +72,10 @@ class LedgerApi(private val client: HttpClient) {
 
     suspend fun deleteTransaction(id: Long) = client.delete("transactions/$id").ensureSuccess()
 
+    /** Accepts an automatic entry as right. */
+    suspend fun confirmTransaction(id: Long): Transaction =
+        client.post("transactions/$id/confirm").bodyOrThrow<Data<Transaction>>().data
+
     suspend fun incomeSources(): List<IncomeSource> =
         client.get("income-sources").bodyOrThrow<Data<List<IncomeSource>>>().data
 
@@ -111,6 +119,8 @@ data class TransactionInput(
     val amount: Money,
     @SerialName("occurred_on") val occurredOn: LocalDate,
     val description: String?,
+    /** A UUID the app picks, so resending an entry made offline can't create a duplicate. */
+    @SerialName("client_ref") val clientRef: String? = null,
 )
 
 @Serializable

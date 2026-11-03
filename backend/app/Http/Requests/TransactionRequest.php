@@ -40,6 +40,8 @@ class TransactionRequest extends FormRequest
             'amount' => ['required', 'integer', 'min:1', 'max:100000000000'],
             'occurred_on' => ['required', 'date_format:Y-m-d'],
             'description' => ['nullable', 'string', 'max:200'],
+            // Set by the app on entries made offline, so a resend can't create a duplicate.
+            'client_ref' => ['sometimes', 'uuid'],
         ];
     }
 

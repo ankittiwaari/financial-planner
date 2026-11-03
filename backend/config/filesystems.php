@@ -38,6 +38,13 @@ return [
             'report' => false,
         ],
 
+        // Database dumps from `php artisan backup:database` (see config/backup.php).
+        'backups' => [
+            'driver' => 'local',
+            'root' => storage_path('app/backups'),
+            'throw' => true,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),

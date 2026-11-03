@@ -15,6 +15,7 @@ import com.algopraxis.dhanniti.domain.startOfMonth
 import com.algopraxis.dhanniti.domain.toInputString
 import com.algopraxis.dhanniti.domain.today
 import com.algopraxis.dhanniti.ui.launchCatching
+import com.algopraxis.dhanniti.ui.launchRefresh
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -75,7 +76,7 @@ class IncomeViewModel(private val ledger: LedgerRepository) : ViewModel() {
 
     fun refresh() {
         status.update { it.copy(refreshing = true, error = null) }
-        launchCatching(
+        launchRefresh(
             onError = { message -> status.update { it.copy(error = message) } },
             onFinally = { status.update { it.copy(refreshing = false) } },
         ) {

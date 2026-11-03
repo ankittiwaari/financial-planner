@@ -23,7 +23,6 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -54,6 +53,7 @@ import com.algopraxis.dhanniti.ui.components.EditorScaffold
 import com.algopraxis.dhanniti.ui.components.EmptyState
 import com.algopraxis.dhanniti.ui.components.ErrorText
 import com.algopraxis.dhanniti.ui.components.SectionLabel
+import com.algopraxis.dhanniti.ui.components.SwitchRow
 import com.algopraxis.dhanniti.ui.components.TabScaffold
 import kotlinx.datetime.LocalDate
 import org.koin.compose.viewmodel.koinViewModel
@@ -269,7 +269,7 @@ fun IncomeEditorScreen(
             }
             SwitchRow(
                 "Credit automatically on payday",
-                "Coming in a later update. Until then, log each credit from the Income tab.",
+                "Recorded on payday for you to confirm. Turn off to log each credit yourself.",
                 state.autoCredit,
                 viewModel::setAutoCredit,
             )
@@ -299,16 +299,5 @@ fun IncomeEditorScreen(
             onConfirm = { confirmDelete = false; viewModel.delete() },
             onDismiss = { confirmDelete = false },
         )
-    }
-}
-
-@Composable
-private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }

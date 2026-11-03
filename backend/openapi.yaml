@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: DhanNiti API
-  version: 0.2.0
+  version: 0.8.0
   description: |
     Personal expense and dues tracker. Single-user: the owner account is created with `php artisan db:seed`.
     Money is always integer paise (₹45,250.50 → 4525050). Dates are ISO 8601; "today" is computed in the user's timezone.
@@ -167,6 +167,7 @@ paths:
     get:
       summary: List transactions, newest first
       parameters:
+        - { name: needs_confirmation, in: query, schema: { type: boolean }, description: Only automatic entries not yet confirmed }
         - { name: from, in: query, schema: { type: string, format: date } }
         - { name: to, in: query, schema: { type: string, format: date } }
         - { name: account_id, in: query, schema: { type: integer } }
@@ -299,6 +300,465 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/ValidationError" }
 
+  # ---------- Milestone 2: obligations ----------
+  # Loans, cards and recurring payments each produce dues. Creating or editing one rebuilds its open dues from
+  # today; deleting it removes unpaid dues, while paid and skipped ones stay as history.
+
+  /loans:
+    get:
+      summary: List loans, active first
+      responses:
+        "200":
+          description: Loans
+          content:
+            application/json:
+              schema: { type: object, required: [data], properties: { data: { type: array, items: { $ref: "#/components/schemas/Loan" } } } }
+    post:
+      summary: Create a loan
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/LoanInput" } } } }
+      responses:
+        "201": { $ref: "#/components/responses/LoanResponse" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /loans/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Get a loan
+      responses:
+        "200": { $ref: "#/components/responses/LoanResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Replace a loan's editable fields
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/LoanInput" } } } }
+      responses:
+        "200": { $ref: "#/components/responses/LoanResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      summary: Delete a loan
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /loans/{id}/schedule:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Amortisation schedule
+      responses:
+        "200":
+          description: One row per EMI
+          content:
+            application/json:
+              schema: { type: object, required: [data], properties: { data: { type: array, items: { $ref: "#/components/schemas/LoanScheduleRow" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /loans/{id}/close:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Mark a loan repaid (e.g. foreclosed) and drop its unpaid dues
+      description: Loans also close by themselves once the last EMI date has passed with nothing left open.
+      responses:
+        "200": { $ref: "#/components/responses/LoanResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /credit-cards:
+    get:
+      summary: List credit cards with their latest statement
+      responses:
+        "200":
+          description: Cards
+          content:
+            application/json:
+              schema: { type: object, required: [data], properties: { data: { type: array, items: { $ref: "#/components/schemas/CreditCard" } } } }
+    post:
+      summary: Create a credit card
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CreditCardInput" } } } }
+      responses:
+        "201": { $ref: "#/components/responses/CreditCardResponse" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /credit-cards/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Get a credit card
+      responses:
+        "200": { $ref: "#/components/responses/CreditCardResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Replace a card's editable fields
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CreditCardInput" } } } }
+      responses:
+        "200": { $ref: "#/components/responses/CreditCardResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      summary: Delete a card and its statements
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /credit-cards/{id}/statements:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: The card's statements, newest first
+      responses:
+        "200":
+          description: Statements
+          content:
+            application/json:
+              schema: { type: object, required: [data], properties: { data: { type: array, items: { $ref: "#/components/schemas/CardStatement" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      summary: Enter the real bill for a period
+      description: |
+        Creates the statement (201), or replaces the estimate for that period (200). Its due takes the new amount
+        unless already paid. Statement and due dates default to the card's days for that period.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [period, total_due]
+              properties:
+                period: { type: string, pattern: "^\\d{4}-\\d{2}$", description: "Month of the statement date, example: \"2026-10\"" }
+                total_due: { type: integer, minimum: 0 }
+                min_due: { type: [integer, "null"], minimum: 0 }
+                statement_date: { type: string, format: date }
+                due_date: { type: string, format: date }
+      responses:
+        "200": { $ref: "#/components/responses/CardStatementResponse" }
+        "201": { $ref: "#/components/responses/CardStatementResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /recurring-payments:
+    get:
+      summary: List recurring payments (rent, SIPs, insurance, subscriptions)
+      responses:
+        "200":
+          description: Recurring payments
+          content:
+            application/json:
+              schema: { type: object, required: [data], properties: { data: { type: array, items: { $ref: "#/components/schemas/RecurringPayment" } } } }
+    post:
+      summary: Create a recurring payment
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/RecurringPaymentInput" } } } }
+      responses:
+        "201": { $ref: "#/components/responses/RecurringPaymentResponse" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /recurring-payments/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Get a recurring payment
+      responses:
+        "200": { $ref: "#/components/responses/RecurringPaymentResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Replace a recurring payment's editable fields
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/RecurringPaymentInput" } } } }
+      responses:
+        "200": { $ref: "#/components/responses/RecurringPaymentResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      summary: Delete a recurring payment
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /dues:
+    get:
+      summary: Dues in a date range, oldest first
+      description: |
+        Generates any missing dues for the next 45 days first. Without a status filter, overdue dues are included
+        however old they are.
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date }, description: Defaults to 30 days ago }
+        - { name: to, in: query, schema: { type: string, format: date }, description: Defaults to 45 days ahead }
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/DueStatus" } }
+      responses:
+        "200":
+          description: Dues
+          content:
+            application/json:
+              schema: { type: object, required: [data], properties: { data: { type: array, items: { $ref: "#/components/schemas/Due" } } } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /dues/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Get a due
+      responses:
+        "200": { $ref: "#/components/responses/DueResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /dues/{id}/pay:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Mark a due paid
+      description: |
+        Books a debit transaction (source_type = due) from the account and marks the due paid. EMIs are filed
+        under "Loan EMI", card bills under "Credit card bill", recurring payments under their own category.
+        409 if the due is already paid or skipped.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount: { type: integer, minimum: 1, description: Defaults to the due's amount }
+                paid_on: { type: string, format: date, description: Defaults to today }
+                account_id: { type: integer, description: Defaults to the source's account; must be active }
+      responses:
+        "200": { $ref: "#/components/responses/DueResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /dues/{id}/skip:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Skip a due without paying it
+      responses:
+        "200": { $ref: "#/components/responses/DueResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /dues/{id}/reopen:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Undo a payment or skip
+      description: Deletes the payment's transaction. Deleting that transaction directly reopens the due too.
+      responses:
+        "200": { $ref: "#/components/responses/DueResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  # ---------- Milestone 3: lending ----------
+  # Money lent is a receivable: shown as "expected back", never counted as spendable. Lending from an account
+  # books a debit (no category); a repayment into an account books a credit (Repayment received). Either side can
+  # leave account_id null for money that isn't tracked here.
+
+  /lendings:
+    get:
+      summary: List lendings, still-owed first, then newest
+      parameters:
+        - { name: person, in: query, schema: { type: string }, description: "Exact name, ignoring case and spacing" }
+        - { name: status, in: query, schema: { type: string, enum: [outstanding, settled, written_off] } }
+      responses:
+        "200":
+          description: Lendings with their repayments
+          content:
+            application/json:
+              schema: { type: object, required: [data], properties: { data: { type: array, items: { $ref: "#/components/schemas/Lending" } } } }
+    post:
+      summary: Record money lent
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/LendingInput" } } } }
+      responses:
+        "201": { $ref: "#/components/responses/LendingResponse" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /lendings/summary:
+    get:
+      summary: Receivables, with a balance per person
+      description: Lendings are grouped by person_name, ignoring case and extra spaces. People who owe come first.
+      responses:
+        "200":
+          description: Totals and people
+          content:
+            application/json:
+              schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/Receivables" } } }
+
+  /lendings/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Get a lending
+      responses:
+        "200": { $ref: "#/components/responses/LendingResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Replace a lending's details
+      description: Moves, resizes or removes its debit to match. The amount can't go below what's been repaid.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/LendingInput" } } } }
+      responses:
+        "200": { $ref: "#/components/responses/LendingResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      summary: Delete a lending with its repayments and every transaction they booked
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /lendings/{id}/repayments:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Record money paid back
+      description: |
+        At most what's still owed (422 otherwise; 409 if already repaid in full). Settles the lending once fully
+        repaid. A repayment on a written-off lending reopens it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount: { type: integer, minimum: 1 }
+                received_on: { type: string, format: date, description: Defaults to today }
+                account_id: { type: [integer, "null"], description: "Where it went; null = not tracked, no transaction" }
+      responses:
+        "201": { $ref: "#/components/responses/LendingResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /lendings/{id}/repayments/{repaymentId}:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { name: repaymentId, in: path, required: true, schema: { type: integer } }
+    delete:
+      summary: Undo a repayment, deleting its transaction
+      responses:
+        "200": { $ref: "#/components/responses/LendingResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /lendings/{id}/write-off:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Give up on what's still owed
+      responses:
+        "200": { $ref: "#/components/responses/LendingResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /lendings/{id}/reopen:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Undo a write-off
+      responses:
+        "200": { $ref: "#/components/responses/LendingResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  # ---------- Milestone 4: projection ----------
+
+  /dashboard:
+    get:
+      summary: Purchasing power for the current cycle
+      description: |
+        Cycle: payday of the largest active income source to the day before the next one; calendar month if the
+        user chose calendar or has no income source.
+
+            purchasing_power = income.total − reserved_for_dues.total − spent_so_far − lent_out
+
+        income.total counts each pay date in the cycle (the credited amount, or the expected one until logged) plus
+        other credits (manual income, repayments). Dues count if dated in the cycle (unless skipped), or older and
+        still unpaid or paid during it; a paid due counts its paid amount. spent_so_far excludes due payments.
+        Money still owed to you is reported under receivables and never counted.
+      responses:
+        "200":
+          description: The dashboard
+          content:
+            application/json:
+              schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/Dashboard" } } }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+  # ---------- Milestone 5: automation ----------
+  # `php artisan automation:run` (hourly) generates dues, posts auto_credit salaries on payday and settles auto_debit
+  # EMIs and recurring payments on their due date. Card bills are never auto-settled. Everything it books is
+  # is_auto and needs confirmation; deleting an auto salary or reopening an auto-settled due stops it being redone.
+
+  /transactions/{id}/confirm:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Accept an automatic entry as right
+      description: An auto-posted salary can take its actual amount here (a due payment's amount can't; 409).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount: { type: integer, minimum: 1 }
+      responses:
+        "200": { $ref: "#/components/responses/TransactionResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /automation/runs:
+    get:
+      summary: What automation did recently, newest first
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+      responses:
+        "200":
+          description: One row per job per run
+          content:
+            application/json:
+              schema: { type: object, required: [data], properties: { data: { type: array, items: { $ref: "#/components/schemas/JobRun" } } } }
+
+  # ---------- Milestone 6: reminders ----------
+  # The server stores the preference; the phone plans and schedules the notifications itself, so they fire offline.
+
+  /settings/reminders:
+    get:
+      summary: Reminder settings (created with the defaults on first read)
+      responses:
+        "200": { $ref: "#/components/responses/ReminderSettingsResponse" }
+    put:
+      summary: Replace reminder settings
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/ReminderSettings" } } } }
+      responses:
+        "200": { $ref: "#/components/responses/ReminderSettingsResponse" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  # ---------- Milestone 7: offline ----------
+
+  /sync:
+    get:
+      summary: Everything the app shows, in one snapshot, for its offline cache
+      description: |
+        Each member is exactly what its own endpoint returns (the same controllers answer). A full snapshot rather
+        than changes since a timestamp: small at personal scale, and no deletions to track. `transactions` is the
+        newest page with its cursor; older pages load from /transactions online.
+      responses:
+        "200":
+          description: The snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [server_time, user, accounts, categories, income_sources, transactions, loans, credit_cards, recurring_payments, dues, lendings, lending_summary, reminder_settings, dashboard]
+                    properties:
+                      server_time: { type: string, format: date-time }
+                      user: { $ref: "#/components/schemas/User" }
+                      accounts: { type: array, items: { $ref: "#/components/schemas/Account" } }
+                      categories: { type: array, items: { $ref: "#/components/schemas/Category" } }
+                      income_sources: { type: array, items: { $ref: "#/components/schemas/IncomeSource" } }
+                      transactions:
+                        type: object
+                        required: [data, meta]
+                        properties:
+                          data: { type: array, items: { $ref: "#/components/schemas/Transaction" } }
+                          meta: { type: object, properties: { next_cursor: { type: [string, "null"] } } }
+                      loans: { type: array, items: { $ref: "#/components/schemas/Loan" } }
+                      credit_cards: { type: array, items: { $ref: "#/components/schemas/CreditCard" } }
+                      recurring_payments: { type: array, items: { $ref: "#/components/schemas/RecurringPayment" } }
+                      dues: { type: array, items: { $ref: "#/components/schemas/Due" } }
+                      lendings: { type: array, items: { $ref: "#/components/schemas/Lending" } }
+                      lending_summary: { $ref: "#/components/schemas/Receivables" }
+                      reminder_settings: { $ref: "#/components/schemas/ReminderSettings" }
+                      dashboard: { $ref: "#/components/schemas/Dashboard" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
 components:
   parameters:
     Id: { name: id, in: path, required: true, schema: { type: integer } }
@@ -341,7 +801,7 @@ components:
         name: { type: string }
         type: { $ref: "#/components/schemas/AccountType" }
         opening_balance: { $ref: "#/components/schemas/Paise" }
-        balance: { type: integer, description: opening_balance + credits − debits, in paise }
+        balance: { type: integer, description: "opening_balance + credits − debits, in paise" }
         is_primary: { type: boolean }
         archived: { type: boolean }
     AccountInput:
@@ -361,7 +821,7 @@ components:
         id: { type: integer }
         name: { type: string }
         kind: { $ref: "#/components/schemas/CategoryKind" }
-        icon: { type: string, description: A single emoji, example: "🍔" }
+        icon: { type: string, description: "A single emoji, example: \"🍔\"" }
         archived: { type: boolean }
     CategoryInput:
       type: object
@@ -371,10 +831,10 @@ components:
         kind: { $ref: "#/components/schemas/CategoryKind" }
         icon: { type: string, maxLength: 16 }
 
-    Direction: { type: string, enum: [credit, debit], description: credit = money in, debit = money out }
+    Direction: { type: string, enum: [credit, debit], description: "credit = money in, debit = money out" }
     Transaction:
       type: object
-      required: [id, account_id, category_id, direction, amount, occurred_on, description, source_type, source_id, period, is_auto]
+      required: [id, account_id, category_id, direction, amount, occurred_on, description, source_type, source_id, period, is_auto, confirmed_at, needs_confirmation]
       properties:
         id: { type: integer }
         account_id: { type: integer }
@@ -383,10 +843,12 @@ components:
         amount: { type: integer, minimum: 1, description: Always positive; direction gives the sign }
         occurred_on: { type: string, format: date }
         description: { type: [string, "null"] }
-        source_type: { type: [string, "null"], enum: [income_source, null], description: What generated it, if anything }
+        source_type: { type: [string, "null"], enum: [income_source, due, null], description: "What generated it, if anything" }
         source_id: { type: [integer, "null"] }
         period: { type: [string, "null"], example: "2026-10" }
         is_auto: { type: boolean, description: Posted by automation (milestone 5) }
+        confirmed_at: { type: [string, "null"], format: date-time }
+        needs_confirmation: { type: boolean, description: "is_auto and not yet confirmed" }
     TransactionInput:
       type: object
       required: [account_id, direction, amount, occurred_on]
@@ -397,6 +859,7 @@ components:
         amount: { type: integer, minimum: 1, maximum: 100000000000 }
         occurred_on: { type: string, format: date }
         description: { type: [string, "null"], maxLength: 200 }
+        client_ref: { type: string, format: uuid, description: "Set by the app on entries made offline: resending the same one returns the original (200) instead of a duplicate" }
 
     PayRule:
       type: string
@@ -438,6 +901,316 @@ components:
         active_from: { type: string, format: date, description: Defaults to today }
         active_to: { type: [string, "null"], format: date }
 
+    LoanType: { type: string, enum: [home, car, personal, education, other] }
+    Loan:
+      type: object
+      required: [id, name, lender, type, principal, interest_rate, tenure_months, emi_amount, emi, first_emi_date, last_emi_date, account_id, auto_debit, status, closed_on, outstanding, emis_paid, emis_left, next_emi_date, total_interest]
+      properties:
+        id: { type: integer }
+        name: { type: string, example: HDFC Home Loan }
+        lender: { type: [string, "null"] }
+        type: { $ref: "#/components/schemas/LoanType" }
+        principal: { $ref: "#/components/schemas/Paise" }
+        interest_rate: { type: number, description: "Annual %, reducing balance", example: 8.5 }
+        tenure_months: { type: integer }
+        emi_amount: { type: [integer, "null"], description: "The bank's EMI as entered; null = computed" }
+        emi: { type: integer, description: "The EMI in use (emi_amount, or computed and rounded to the rupee)" }
+        first_emi_date: { type: string, format: date }
+        last_emi_date: { type: [string, "null"], format: date }
+        account_id: { type: integer }
+        auto_debit: { type: boolean, description: "Paid by NACH/ECS; milestone 5 settles these on the due date" }
+        status: { type: string, enum: [active, closed] }
+        closed_on: { type: [string, "null"], format: date }
+        outstanding: { type: integer, description: Principal left after the EMIs counted as paid }
+        emis_paid: { type: integer, description: "EMIs dated before today, plus later ones marked paid" }
+        emis_left: { type: integer }
+        next_emi_date: { type: [string, "null"], format: date }
+        total_interest: { type: integer, description: Interest over the whole schedule }
+    LoanInput:
+      type: object
+      required: [name, type, principal, interest_rate, tenure_months, first_emi_date, account_id]
+      properties:
+        name: { type: string, maxLength: 60 }
+        lender: { type: [string, "null"], maxLength: 60 }
+        type: { $ref: "#/components/schemas/LoanType" }
+        principal: { type: integer, minimum: 1 }
+        interest_rate: { type: number, minimum: 0, maximum: 99.99 }
+        tenure_months: { type: integer, minimum: 1, maximum: 600 }
+        emi_amount: { type: [integer, "null"], description: "Must exceed the first month's interest" }
+        first_emi_date: { type: string, format: date, description: "Later EMIs fall on the same day, clamped for short months" }
+        account_id: { type: integer }
+        auto_debit: { type: boolean, default: true }
+    LoanScheduleRow:
+      type: object
+      required: [installment, due_date, emi, interest, principal, outstanding, paid]
+      properties:
+        installment: { type: integer }
+        due_date: { type: string, format: date }
+        emi: { type: integer }
+        interest: { type: integer }
+        principal: { type: integer }
+        outstanding: { type: integer, description: Left after this EMI }
+        paid: { type: boolean }
+
+    EstimateMode:
+      type: string
+      enum: [last_statement, avg_3, fixed]
+      description: How the bill is guessed before the real statement is entered
+    CreditCard:
+      type: object
+      required: [id, nickname, last4, issuer, credit_limit, statement_day, due_day, pay_from_account_id, estimate_mode, fixed_estimate, latest_statement]
+      properties:
+        id: { type: integer }
+        nickname: { type: string }
+        last4: { type: [string, "null"], pattern: "^\\d{4}$" }
+        issuer: { type: [string, "null"] }
+        credit_limit: { type: [integer, "null"] }
+        statement_day: { type: integer, minimum: 1, maximum: 31 }
+        due_day: { type: integer, minimum: 1, maximum: 31, description: "In the statement's month if after statement_day, else the next month" }
+        pay_from_account_id: { type: integer }
+        estimate_mode: { $ref: "#/components/schemas/EstimateMode" }
+        fixed_estimate: { type: [integer, "null"] }
+        latest_statement: { oneOf: [{ $ref: "#/components/schemas/CardStatement" }, { type: "null" }] }
+    CreditCardInput:
+      type: object
+      required: [nickname, statement_day, due_day, pay_from_account_id]
+      properties:
+        nickname: { type: string, maxLength: 40 }
+        last4: { type: [string, "null"], pattern: "^\\d{4}$", description: Never the full number }
+        issuer: { type: [string, "null"], maxLength: 40 }
+        credit_limit: { type: [integer, "null"] }
+        statement_day: { type: integer, minimum: 1, maximum: 31 }
+        due_day: { type: integer, minimum: 1, maximum: 31 }
+        pay_from_account_id: { type: integer }
+        estimate_mode: { $ref: "#/components/schemas/EstimateMode" }
+        fixed_estimate: { type: [integer, "null"], description: Required when estimate_mode = fixed }
+    CardStatement:
+      type: object
+      required: [id, credit_card_id, period, statement_date, due_date, total_due, min_due, amount_paid, status]
+      properties:
+        id: { type: integer }
+        credit_card_id: { type: integer }
+        period: { type: string, example: "2026-10" }
+        statement_date: { type: string, format: date }
+        due_date: { type: string, format: date }
+        total_due: { type: integer }
+        min_due: { type: [integer, "null"] }
+        amount_paid: { type: integer }
+        status: { type: string, enum: [estimated, entered, partially_paid, paid] }
+
+    Frequency: { type: string, enum: [monthly, quarterly, yearly] }
+    RecurringPayment:
+      type: object
+      required: [id, name, amount, frequency, day, account_id, category_id, auto_debit, active_from, active_to, next_date]
+      properties:
+        id: { type: integer }
+        name: { type: string, example: Rent }
+        amount: { $ref: "#/components/schemas/Paise" }
+        frequency: { $ref: "#/components/schemas/Frequency" }
+        day: { type: integer, minimum: 1, maximum: 31 }
+        account_id: { type: integer }
+        category_id: { type: [integer, "null"], description: "Expense category for payments; defaults to Bills & utilities" }
+        auto_debit: { type: boolean }
+        active_from: { type: string, format: date, description: "Quarterly/yearly payments fall in this month and every 3/12 after" }
+        active_to: { type: [string, "null"], format: date }
+        next_date: { type: [string, "null"], format: date }
+    RecurringPaymentInput:
+      type: object
+      required: [name, amount, frequency, day, account_id]
+      properties:
+        name: { type: string, maxLength: 60 }
+        amount: { type: integer, minimum: 1 }
+        frequency: { $ref: "#/components/schemas/Frequency" }
+        day: { type: integer, minimum: 1, maximum: 31 }
+        account_id: { type: integer }
+        category_id: { type: [integer, "null"] }
+        auto_debit: { type: boolean, default: false }
+        active_from: { type: string, format: date, description: Defaults to today }
+        active_to: { type: [string, "null"], format: date }
+
+    DueStatus: { type: string, enum: [upcoming, overdue, paid, skipped], description: overdue = unpaid and dated before today }
+    Due:
+      type: object
+      required: [id, source_type, source_id, period, title, amount, due_date, status, paid_on, paid_amount, transaction_id, account_id, auto_debit, is_estimate, min_due]
+      properties:
+        id: { type: integer }
+        source_type: { type: string, enum: [loan, card_statement, recurring_payment] }
+        source_id: { type: integer }
+        period: { type: string, example: "2026-11" }
+        title: { type: string, example: HDFC Home Loan EMI }
+        amount: { $ref: "#/components/schemas/Paise" }
+        due_date: { type: string, format: date }
+        status: { $ref: "#/components/schemas/DueStatus" }
+        paid_on: { type: [string, "null"], format: date }
+        paid_amount: { type: [integer, "null"] }
+        transaction_id: { type: [integer, "null"] }
+        account_id: { type: [integer, "null"], description: "Account it's paid from by default; null if the source was deleted" }
+        auto_debit: { type: boolean }
+        is_estimate: { type: boolean, description: "A card bill whose real statement isn't entered yet" }
+        min_due: { type: [integer, "null"], description: Card bills only }
+
+    LendingStatus:
+      type: string
+      enum: [open, partially_repaid, settled, written_off]
+    Lending:
+      type: object
+      required: [id, person_name, contact, amount, repaid, outstanding, lent_on, expected_by, notes, account_id, transaction_id, status, closed_on, is_overdue, repayments]
+      properties:
+        id: { type: integer }
+        person_name: { type: string }
+        contact: { type: [string, "null"] }
+        amount: { $ref: "#/components/schemas/Paise" }
+        repaid: { type: integer }
+        outstanding: { type: integer, description: "Still owed; 0 once settled or written off" }
+        lent_on: { type: string, format: date }
+        expected_by: { type: [string, "null"], format: date }
+        notes: { type: [string, "null"] }
+        account_id: { type: [integer, "null"], description: "Account the money left; null = not tracked" }
+        transaction_id: { type: [integer, "null"] }
+        status: { $ref: "#/components/schemas/LendingStatus" }
+        closed_on: { type: [string, "null"], format: date, description: "Last repayment date when settled, or the write-off date" }
+        is_overdue: { type: boolean, description: "Still owed after expected_by" }
+        repayments:
+          type: array
+          items:
+            type: object
+            required: [id, amount, received_on, account_id, transaction_id]
+            properties:
+              id: { type: integer }
+              amount: { type: integer }
+              received_on: { type: string, format: date }
+              account_id: { type: [integer, "null"] }
+              transaction_id: { type: [integer, "null"] }
+    LendingInput:
+      type: object
+      required: [person_name, amount, lent_on]
+      properties:
+        person_name: { type: string, maxLength: 60 }
+        contact: { type: [string, "null"], maxLength: 60 }
+        amount: { type: integer, minimum: 1 }
+        lent_on: { type: string, format: date }
+        expected_by: { type: [string, "null"], format: date }
+        notes: { type: [string, "null"], maxLength: 200 }
+        account_id: { type: [integer, "null"], description: "Books a debit from this account; null = not tracked" }
+    PersonBalance:
+      type: object
+      required: [name, contact, lent, repaid, written_off, outstanding, open_count, overdue, next_expected_by, last_lent_on, lending_ids]
+      properties:
+        name: { type: string, description: As written on their latest lending }
+        contact: { type: [string, "null"] }
+        lent: { type: integer }
+        repaid: { type: integer }
+        written_off: { type: integer }
+        outstanding: { type: integer }
+        open_count: { type: integer, description: Lendings still owed }
+        overdue: { type: boolean }
+        next_expected_by: { type: [string, "null"], format: date }
+        last_lent_on: { type: string, format: date }
+        lending_ids: { type: array, items: { type: integer } }
+    Receivables:
+      type: object
+      required: [total_outstanding, overdue_total, people_owing, people]
+      properties:
+        total_outstanding: { type: integer }
+        overdue_total: { type: integer }
+        people_owing: { type: integer }
+        people: { type: array, items: { $ref: "#/components/schemas/PersonBalance" } }
+
+    Dashboard:
+      type: object
+      required: [cycle, income, reserved_for_dues, spent_so_far, lent_out, purchasing_power, per_day_left, receivables, next_dues, alerts]
+      properties:
+        cycle:
+          type: object
+          required: [start, end, mode, anchor_income_source_id, days_total, days_left]
+          properties:
+            start: { type: string, format: date }
+            end: { type: string, format: date }
+            mode: { type: string, enum: [payday, calendar] }
+            anchor_income_source_id: { type: [integer, "null"], description: The salary the cycle runs from }
+            days_total: { type: integer }
+            days_left: { type: integer, description: Including today }
+        income:
+          type: object
+          required: [expected, credited, other, total, sources]
+          properties:
+            expected: { type: integer, description: What the pay dates in the cycle should bring }
+            credited: { type: integer, description: What has been logged for them }
+            other: { type: integer, description: "Other credits in the cycle: manual income, repayments" }
+            total: { type: integer, description: "Credited (or expected) salary plus other" }
+            sources:
+              type: array
+              items:
+                type: object
+                required: [income_source_id, name, period, pay_date, expected, credited, is_variable, awaiting]
+                properties:
+                  income_source_id: { type: integer }
+                  name: { type: string }
+                  period: { type: string, example: "2026-10" }
+                  pay_date: { type: string, format: date }
+                  expected: { type: integer }
+                  credited: { type: [integer, "null"] }
+                  is_variable: { type: boolean }
+                  awaiting: { type: boolean, description: Payday has passed and nothing is logged }
+        reserved_for_dues:
+          type: object
+          required: [total, emis, cards, recurring, overdue, paid, open]
+          properties:
+            total: { type: integer }
+            emis: { type: integer }
+            cards: { type: integer }
+            recurring: { type: integer }
+            overdue: { type: integer, description: From before the cycle and still unpaid }
+            paid: { type: integer }
+            open: { type: integer }
+        spent_so_far: { type: integer, description: "Debits in the cycle, excluding due payments and lending" }
+        lent_out: { type: integer, description: Money lent from accounts in the cycle }
+        purchasing_power: { type: integer, description: Can be negative }
+        per_day_left: { type: integer, description: "purchasing_power ÷ days_left, never below 0" }
+        receivables:
+          type: object
+          required: [total_lent_outstanding, people, overdue]
+          properties:
+            total_lent_outstanding: { type: integer }
+            people: { type: integer }
+            overdue: { type: integer }
+        next_dues: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/Due" }, description: Unpaid dues from today on }
+        alerts:
+          type: array
+          items:
+            type: object
+            required: [type, message]
+            properties:
+              type: { type: string, enum: [confirm_income, confirm_auto, enter_card_bill, overdue_dues, overdue_lendings] }
+              message: { type: string }
+              transaction_id: { type: integer, description: confirm_auto only }
+
+    JobRun:
+      type: object
+      required: [id, job, run_for_date, status, counts, error, ran_at]
+      properties:
+        id: { type: integer }
+        job: { type: string, enum: [generate_dues, post_salary, settle_auto_debits] }
+        run_for_date: { type: string, format: date }
+        status: { type: string, enum: [ok, failed] }
+        counts: { type: [object, "null"], additionalProperties: { type: integer }, example: { posted: 1, already_logged: 0 } }
+        error: { type: [string, "null"] }
+        ran_at: { type: string, format: date-time }
+
+    ReminderSettings:
+      type: object
+      required: [enabled, offsets_days, time_of_day, overdue_daily]
+      properties:
+        enabled: { type: boolean, default: true }
+        offsets_days:
+          type: array
+          maxItems: 6
+          items: { type: integer, minimum: 0, maximum: 30 }
+          default: [5, 2, 0]
+          description: "Days before the due date to remind; 0 = on the day. Distinct; returned furthest first. May be empty."
+        time_of_day: { type: string, pattern: "^([01]\\d|2[0-3]):[0-5]\\d$", default: "09:00", description: Local time }
+        overdue_daily: { type: boolean, default: true, description: Nudge once a day while a due is overdue }
+
   responses:
     AccountResponse:
       description: An account
@@ -451,6 +1224,27 @@ components:
     IncomeSourceResponse:
       description: An income source
       content: { application/json: { schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/IncomeSource" } } } } }
+    LoanResponse:
+      description: A loan
+      content: { application/json: { schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/Loan" } } } } }
+    CreditCardResponse:
+      description: A credit card
+      content: { application/json: { schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/CreditCard" } } } } }
+    CardStatementResponse:
+      description: A card statement
+      content: { application/json: { schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/CardStatement" } } } } }
+    RecurringPaymentResponse:
+      description: A recurring payment
+      content: { application/json: { schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/RecurringPayment" } } } } }
+    LendingResponse:
+      description: A lending
+      content: { application/json: { schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/Lending" } } } } }
+    ReminderSettingsResponse:
+      description: Reminder settings
+      content: { application/json: { schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/ReminderSettings" } } } } }
+    DueResponse:
+      description: A due
+      content: { application/json: { schema: { type: object, required: [data], properties: { data: { $ref: "#/components/schemas/Due" } } } } }
     Error:
       description: Error with a message
       content:

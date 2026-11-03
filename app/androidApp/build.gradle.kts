@@ -15,6 +15,9 @@ dependencies {
     implementation(project(":shared"))
 
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.core)
+    implementation(libs.androidx.work) // due reminders
+    implementation(libs.kotlinx.datetime)
     implementation(libs.koin.android)
 
     implementation(libs.compose.uiToolingPreview)

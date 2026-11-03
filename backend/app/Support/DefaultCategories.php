@@ -12,13 +12,21 @@ final class DefaultCategories
 {
     public const SALARY = 'Salary';
 
+    public const LOAN_EMI = 'Loan EMI';
+
+    public const CARD_BILL = 'Credit card bill';
+
+    public const BILLS = 'Bills & utilities';
+
+    public const REPAYMENT = 'Repayment received';
+
     /** @var array<string, array<string, string>> kind => [name => icon] */
     private const DEFAULTS = [
         'income' => [
             self::SALARY => '💼',
             'Interest' => '📈',
             'Refund' => '↩️',
-            'Repayment received' => '🤝',
+            self::REPAYMENT => '🤝',
             'Other income' => '💰',
         ],
         'expense' => [
@@ -28,7 +36,9 @@ final class DefaultCategories
             'Transport' => '🚌',
             'Fuel' => '⛽',
             'Shopping' => '🛍️',
-            'Bills & utilities' => '💡',
+            self::BILLS => '💡',
+            self::LOAN_EMI => '🏦',
+            self::CARD_BILL => '💳',
             'Mobile & internet' => '📱',
             'Health' => '💊',
             'Entertainment' => '🎬',
@@ -54,6 +64,24 @@ final class DefaultCategories
         return $user->categories()->firstOrCreate(
             ['kind' => CategoryKind::Income, 'name' => self::SALARY],
             ['icon' => self::DEFAULTS['income'][self::SALARY]],
+        );
+    }
+
+    /** A default income category by name (one of the constants above), recreated if the user deleted it. */
+    public static function incomeFor(User $user, string $name): \App\Models\Category
+    {
+        return $user->categories()->firstOrCreate(
+            ['kind' => CategoryKind::Income, 'name' => $name],
+            ['icon' => self::DEFAULTS['income'][$name]],
+        );
+    }
+
+    /** A default expense category by name (one of the constants above), recreated if the user deleted it. */
+    public static function expenseFor(User $user, string $name): \App\Models\Category
+    {
+        return $user->categories()->firstOrCreate(
+            ['kind' => CategoryKind::Expense, 'name' => $name],
+            ['icon' => self::DEFAULTS['expense'][$name]],
         );
     }
 }

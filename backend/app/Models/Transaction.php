@@ -23,7 +23,7 @@ class Transaction extends Model
 
     protected $fillable = [
         'account_id', 'category_id', 'direction', 'amount', 'occurred_on', 'description',
-        'source_type', 'source_id', 'period', 'is_auto',
+        'source_type', 'source_id', 'period', 'is_auto', 'client_ref',
     ];
 
     protected function casts(): array
@@ -34,6 +34,7 @@ class Transaction extends Model
             // occurred_on stays a plain "Y-m-d" string (validated on input). A date cast would store
             // "Y-m-d 00:00:00" while cursor pagination compares against an ISO timestamp, repeating rows.
             'is_auto' => 'boolean',
+            'confirmed_at' => 'datetime',
         ];
     }
 

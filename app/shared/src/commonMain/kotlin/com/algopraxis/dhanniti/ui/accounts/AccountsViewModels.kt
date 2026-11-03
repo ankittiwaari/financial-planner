@@ -9,6 +9,7 @@ import com.algopraxis.dhanniti.domain.AccountType
 import com.algopraxis.dhanniti.domain.Money
 import com.algopraxis.dhanniti.domain.toInputString
 import com.algopraxis.dhanniti.ui.launchCatching
+import com.algopraxis.dhanniti.ui.launchRefresh
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -40,7 +41,7 @@ class AccountsViewModel(private val ledger: LedgerRepository) : ViewModel() {
     fun refresh() {
         refreshing.value = true
         error.value = null
-        launchCatching(onError = { error.value = it }, onFinally = { refreshing.value = false }) {
+        launchRefresh(onError = { error.value = it }, onFinally = { refreshing.value = false }) {
             ledger.refreshAccounts()
         }
     }

@@ -25,6 +25,9 @@ class TransactionResource extends JsonResource
             'source_id' => $this->source_id,
             'period' => $this->period,
             'is_auto' => $this->is_auto,
+            'confirmed_at' => $this->confirmed_at?->toIso8601String(),
+            // Booked by automation and not yet looked at.
+            'needs_confirmation' => $this->is_auto && $this->confirmed_at === null,
         ];
     }
 }
