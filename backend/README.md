@@ -556,8 +556,8 @@ other cPanel deploys on this server).
 
 1. **Domain**: in cPanel → Domains, create `dhanniti.algopraxis.com` with document root
    `dhanniti.algopraxis.com/public`, and enable AutoSSL for it.
-2. **PHP 8.4**: MultiPHP Manager → set the domain to PHP 8.4. Check that the CLI is 8.4 too (`php -v` over SSH);
-   if not, add `alias php=/opt/cpanel/ea-php84/root/usr/bin/php` to `~/.bashrc` (the lock file is resolved for 8.4).
+2. **PHP 8.3**: MultiPHP Manager → set the domain to PHP 8.3. Check that the CLI is 8.3 too (`php -v` over SSH);
+   if not, add `alias php=/opt/cpanel/ea-php83/root/usr/bin/php` to `~/.bashrc` (the lock file is resolved for 8.3).
 3. **Database**: MySQL Databases → create a database and a user with all privileges on it.
 4. **Run the workflow once**: it copies the code, then stops with "`.env` is missing". That's expected.
 5. **`.env`**: over SSH, in `~/dhanniti.algopraxis.com`:

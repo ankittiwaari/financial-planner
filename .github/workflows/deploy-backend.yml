@@ -35,7 +35,7 @@ jobs:
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.4"
+          php-version: "8.3" # production runs 8.3; composer.lock is resolved for it
           extensions: pdo_sqlite, zip, intl, bcmath
           coverage: none
 

@@ -6,7 +6,7 @@ See [PLAN.md](PLAN.md) for the full design: data model, automation jobs, API, sc
 
 | Folder | What |
 |---|---|
-| [`backend/`](backend) | Laravel 12 API (PHP 8.4, Sanctum, MySQL 8.4, Pest), run with Docker |
+| [`backend/`](backend) | Laravel 12 API (PHP 8.3, Sanctum, MySQL 8.4, Pest), run with Docker |
 | [`app/`](app) | Compose Multiplatform app (Android first): `shared` (UI, Ktor, Room, Koin) + `androidApp` |
 
 ## Run the API

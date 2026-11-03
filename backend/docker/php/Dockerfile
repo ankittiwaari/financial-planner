@@ -1,5 +1,6 @@
-# Development image: PHP 8.4 CLI with the extensions Laravel and MySQL need, Composer, and mysqldump for backups.
-FROM php:8.4-cli
+# Development image: PHP 8.3 CLI, matching production (composer.json pins the platform to 8.3), with the extensions
+# Laravel and MySQL need, Composer, and mysqldump for backups.
+FROM php:8.3-cli
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git unzip libzip-dev libicu-dev default-mysql-client \
