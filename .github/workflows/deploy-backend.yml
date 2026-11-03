@@ -1,0 +1,125 @@
+name: Deploy backend to cPanel
+
+# The Laravel API lives in backend/ of this repo (the Android app is in app/). Only backend/ is deployed: it's
+# copied with rsync into ~/dhanniti.algopraxis.com on the server, so the domain's document root is
+# ~/dhanniti.algopraxis.com/public. First-time server setup: backend/README.md, "Deploying".
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch: # deploy by hand from the Actions tab
+
+# One deploy at a time; a newer push waits rather than racing the one in progress.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+env:
+  # Relative to the cPanel account's home directory.
+  DEPLOY_PATH: dhanniti.algopraxis.com
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: pdo_sqlite, zip, intl, bcmath
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Run tests
+        # phpunit.xml points the tests at an in-memory SQLite database; they only need an app key.
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          php artisan test
+
+  deploy:
+    needs: test # never deploy code whose tests fail
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install sshpass
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass rsync
+
+      - name: Copy backend to the server
+        env:
+          SSHPASS: ${{ secrets.CPANEL_PASSWORD }} # sshpass -e reads it from here, keeping it out of the process list
+        run: |
+          # --delete removes files deleted from the repo, but never the excluded ones: the server's own .env,
+          # storage (logs, backups, sessions), installed vendor/ and generated caches survive every deploy.
+          rsync -az --delete \
+            --exclude='.env' \
+            --exclude='/storage/' \
+            --exclude='/vendor/' \
+            --exclude='/node_modules/' \
+            --exclude='/bootstrap/cache/*.php' \
+            --exclude='/public/storage' \
+            --exclude='/tests/' \
+            --exclude='/docker/' \
+            --exclude='compose.yaml' \
+            -e "sshpass -e ssh -o StrictHostKeyChecking=no" \
+            backend/ "${{ secrets.CPANEL_USER }}@${{ secrets.CPANEL_HOST }}:${DEPLOY_PATH}/"
+
+      - name: Install, migrate and cache on the server
+        env:
+          SSHPASS: ${{ secrets.CPANEL_PASSWORD }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=no "${{ secrets.CPANEL_USER }}@${{ secrets.CPANEL_HOST }}" \
+            DEPLOY_PATH="$DEPLOY_PATH" bash -s << 'EOF'
+            set -euo pipefail
+            cd "$HOME/$DEPLOY_PATH"
+
+            if [ ! -f .env ]; then
+              echo "::error::$HOME/$DEPLOY_PATH/.env is missing. Create it once by hand (see backend/README.md, Deploying)."
+              exit 1
+            fi
+
+            # Directories Laravel writes to, which rsync deliberately doesn't create or touch.
+            mkdir -p storage/app/private storage/app/public storage/app/backups \
+              storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+
+            composer install --no-dev --optimize-autoloader --no-interaction --no-progress
+
+            # Clear stale caches before migrating, so the migration runs with the new code's config.
+            php artisan optimize:clear
+            php artisan migrate --force
+            php artisan config:cache
+            php artisan route:cache
+            php artisan event:cache
+
+            chmod -R 775 storage bootstrap/cache
+
+            # Smoke test: the app boots and the API routes are registered.
+            php artisan route:list --path=api/v1/health | grep -q health
+            echo "Deployed $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          EOF
+
+      - name: Check the API answers
+        run: |
+          # The health endpoint needs no login. Retry briefly in case PHP-FPM is still picking up the new code.
+          for i in 1 2 3 4 5; do
+            if curl -fsS "https://${DEPLOY_PATH}/api/v1/health" | grep -q '"ok"'; then
+              echo "API is up"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::https://${DEPLOY_PATH}/api/v1/health did not answer {\"status\":\"ok\"}"
+          exit 1

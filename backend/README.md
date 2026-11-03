@@ -537,6 +537,50 @@ tests/Unit/
 
 ---
 
+## Deploying
+
+`.github/workflows/deploy-backend.yml` deploys to cPanel at **https://dhanniti.algopraxis.com** on every push to
+`master` that touches `backend/` (or by hand: Actions → *Deploy backend to cPanel* → Run workflow). It runs the tests
+first and only deploys if they pass, then:
+
+1. rsyncs `backend/` into `~/dhanniti.algopraxis.com` (never touching the server's `.env`, `storage/` or `vendor/`),
+2. runs `composer install --no-dev`, `migrate --force` and the config/route/event caches,
+3. checks that `/api/v1/health` answers.
+
+### Repository secrets
+
+Settings → Secrets and variables → Actions: `CPANEL_HOST`, `CPANEL_USER`, `CPANEL_PASSWORD` (the same three as the
+other cPanel deploys on this server).
+
+### One-time server setup
+
+1. **Domain**: in cPanel → Domains, create `dhanniti.algopraxis.com` with document root
+   `dhanniti.algopraxis.com/public`, and enable AutoSSL for it.
+2. **PHP 8.4**: MultiPHP Manager → set the domain to PHP 8.4. Check that the CLI is 8.4 too (`php -v` over SSH);
+   if not, add `alias php=/opt/cpanel/ea-php84/root/usr/bin/php` to `~/.bashrc` (the lock file is resolved for 8.4).
+3. **Database**: MySQL Databases → create a database and a user with all privileges on it.
+4. **Run the workflow once**: it copies the code, then stops with "`.env` is missing". That's expected.
+5. **`.env`**: over SSH, in `~/dhanniti.algopraxis.com`:
+   ```bash
+   cp .env.example .env
+   php artisan key:generate
+   ```
+   Then edit `.env`: `APP_ENV=production`, `APP_DEBUG=false`, `APP_URL=https://dhanniti.algopraxis.com`,
+   `DB_HOST=localhost` plus the database name, user and password from step 3, the `OWNER_*` login, and
+   `LOG_LEVEL=warning`.
+6. **Run the workflow again**: it migrates and goes live. Then create the login: `php artisan db:seed --force`.
+7. **Cron** (cPanel → Cron Jobs), every minute, for automation (salary posting, auto-debits) and the daily backup:
+   ```
+   * * * * * cd ~/dhanniti.algopraxis.com && php artisan schedule:run >> /dev/null 2>&1
+   ```
+8. **App**: set the release `API_BASE_URL` in `app/androidApp/build.gradle.kts` to
+   `https://dhanniti.algopraxis.com/api/v1/`.
+
+Backups land in `~/dhanniti.algopraxis.com/storage/app/backups`, on the same server: copy them off-site (see
+*Offline & Backups*).
+
+---
+
 ## Useful Commands
 
 ```bash
