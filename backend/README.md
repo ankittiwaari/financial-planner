@@ -560,15 +560,22 @@ other cPanel deploys on this server).
    if not, add `alias php=/opt/cpanel/ea-php83/root/usr/bin/php` to `~/.bashrc` (the lock file is resolved for 8.3).
 3. **Database**: MySQL Databases → create a database and a user with all privileges on it.
 4. **Run the workflow once**: it copies the code, then stops with "`.env` is missing". That's expected.
-5. **`.env`**: over SSH, in `~/dhanniti.algopraxis.com`:
-   ```bash
-   cp .env.example .env
-   php artisan key:generate
-   ```
-   Then edit `.env`: `APP_ENV=production`, `APP_DEBUG=false`, `APP_URL=https://dhanniti.algopraxis.com`,
-   `DB_HOST=localhost` plus the database name, user and password from step 3, the `OWNER_*` login, and
-   `LOG_LEVEL=warning`.
-6. **Run the workflow again**: it migrates and goes live. Then create the login: `php artisan db:seed --force`.
+5. **`.env`**: over SSH, in `~/dhanniti.algopraxis.com`, `cp .env.example .env` and edit it: `APP_ENV=production`,
+   `APP_DEBUG=false`, `APP_URL=https://dhanniti.algopraxis.com`, `DB_HOST=localhost` plus the database name, user and
+   password from step 3, the `OWNER_*` login, and `LOG_LEVEL=warning`. Leave `APP_KEY=` empty: the next deploy
+   generates it.
+6. **Run the workflow again**: it generates the key, migrates and goes live. Then create the login:
+   `php artisan db:seed --force`.
+
+To set the key by hand instead, clear any cached config first and pass `--force`. Without them `key:generate`
+compares against a stale cached key, and in production it asks to confirm and, when nobody answers, cancels without
+changing `.env`:
+
+```bash
+php artisan config:clear
+php artisan key:generate --force
+grep APP_KEY .env
+```
 7. **Cron** (cPanel → Cron Jobs), every minute, for automation (salary posting, auto-debits) and the daily backup:
    ```
    * * * * * cd ~/dhanniti.algopraxis.com && php artisan schedule:run >> /dev/null 2>&1

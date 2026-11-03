@@ -100,6 +100,14 @@ jobs:
 
             # Clear stale caches before migrating, so the migration runs with the new code's config.
             php artisan optimize:clear
+
+            # First deploy: give the app its encryption key. Only when .env has none, since changing it later would
+            # sign everyone out. --force: in production key:generate otherwise asks to confirm and, with nobody to
+            # answer, silently leaves .env unchanged.
+            if ! grep -qE '^APP_KEY=base64:.+' .env; then
+              php artisan key:generate --force
+            fi
+
             php artisan migrate --force
             php artisan config:cache
             php artisan route:cache
